@@ -1,0 +1,6 @@
+{
+  "name": "Portal RT Online - Manajemen Warga, Iuran & Pengumuman",
+  "description": "Aplikasi pengelolaan data pengurus, iuran bulanan, grafik kas transparan, dan pengumuman warga RT yang ramah lansia dan responsif untuk GitHub Pages.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
