@@ -13,8 +13,7 @@ export const initialConfig: RTConfig = {
   villageName: 'Wedoro',
   districtName: 'Waru',
   city: 'Sidoarjo',
-  monthlyDuesAmount: 50000, // Rp 50.000 / KK / bulan
-  adminPin: '1234',
+  monthlyDuesAmount: 10000, // Rp 50.000 / KK / bulan
 };
 
 // Kas Awal Saldo Bawaan (Awal Tahun 2026)
