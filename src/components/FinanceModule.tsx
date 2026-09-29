@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { CashTransaction, RTConfig } from '../types';
-import { formatDateIndo, formatMonthYearIndo, formatRupiah } from '../utils/formatters';
+import { formatMonthYearIndo, formatRupiah } from '../utils/formatters';
 import { 
   TrendingUp, 
   TrendingDown, 
@@ -34,36 +34,41 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
   const [activeTypeFilter, setActiveTypeFilter] = useState<'all' | 'income' | 'expense'>('all');
   const [searchQuery, setSearchQuery] = useState('');
 
+  // Defensive array check
+  const safeTransactions = useMemo(() => {
+    return Array.isArray(transactions) ? transactions : [];
+  }, [transactions]);
+
   // Calculate Real-time Overall Balance
   const totalAllIncome = useMemo(() => {
-    return transactions
-      .filter((t) => t.type === 'income')
-      .reduce((sum, t) => sum + t.amount, 0);
-  }, [transactions]);
+    return safeTransactions
+      .filter((t) => t && t.type === 'income')
+      .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+  }, [safeTransactions]);
 
   const totalAllExpense = useMemo(() => {
-    return transactions
-      .filter((t) => t.type === 'expense')
-      .reduce((sum, t) => sum + t.amount, 0);
-  }, [transactions]);
+    return safeTransactions
+      .filter((t) => t && t.type === 'expense')
+      .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+  }, [safeTransactions]);
 
-  const realTimeBalance = baseBalance + totalAllIncome - totalAllExpense;
+  const realTimeBalance = (Number(baseBalance) || 0) + totalAllIncome - totalAllExpense;
 
   // Calculate stats for the selected month
   const currentMonthTransactions = useMemo(() => {
-    return transactions.filter((t) => t.date.startsWith(selectedMonth));
-  }, [transactions, selectedMonth]);
+    return safeTransactions.filter((t) => t && t.date && t.date.startsWith(selectedMonth));
+  }, [safeTransactions, selectedMonth]);
 
   const monthIncome = useMemo(() => {
     return currentMonthTransactions
       .filter((t) => t.type === 'income')
-      .reduce((sum, t) => sum + t.amount, 0);
+      .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
   }, [currentMonthTransactions]);
 
   const monthExpense = useMemo(() => {
     return currentMonthTransactions
       .filter((t) => t.type === 'expense')
-      .reduce((sum, t) => sum + t.amount, 0);
+      .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
   }, [currentMonthTransactions]);
 
   const monthSurplus = monthIncome - monthExpense;
@@ -72,45 +77,51 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
   const monthList = ['2026-04', '2026-05', '2026-06', '2026-07', '2026-08', '2026-09'];
   
   const monthlyTrendData = useMemo(() => {
-    let runningBalance = baseBalance;
+    let runningBalance = Number(baseBalance) || 0;
     
     return monthList.map((mStr) => {
-      const monthTx = transactions.filter((t) => t.date.startsWith(mStr));
-      const inc = monthTx.filter((t) => t.type === 'income').reduce((acc, t) => acc + t.amount, 0);
-      const exp = monthTx.filter((t) => t.type === 'expense').reduce((acc, t) => acc + t.amount, 0);
+      const monthTx = safeTransactions.filter((t) => t && t.date && t.date.startsWith(mStr));
+      const inc = monthTx.filter((t) => t.type === 'income').reduce((acc, t) => acc + (Number(t.amount) || 0), 0);
+      const exp = monthTx.filter((t) => t.type === 'expense').reduce((acc, t) => acc + (Number(t.amount) || 0), 0);
       runningBalance += (inc - exp);
       
       const [year, month] = mStr.split('-');
-      const shortName = new Intl.DateTimeFormat('id-ID', { month: 'short' }).format(
-        new Date(parseInt(year), parseInt(month) - 1, 1)
-      );
+      let shortName = mStr;
+      try {
+        shortName = new Intl.DateTimeFormat('id-ID', { month: 'short' }).format(
+          new Date(parseInt(year, 10), parseInt(month, 10) - 1, 1)
+        );
+      } catch {
+        shortName = month || '';
+      }
 
       return {
         monthKey: mStr,
-        label: `${shortName} ${year.slice(2)}`,
+        label: `${shortName} ${year ? year.slice(2) : ''}`,
         income: inc,
         expense: exp,
         balance: runningBalance,
       };
     });
-  }, [transactions, baseBalance]);
+  }, [safeTransactions, baseBalance]);
 
   // Max value for bar scaling
   const maxBarValue = useMemo(() => {
     const highest = Math.max(
-      ...monthlyTrendData.map((d) => Math.max(d.income, d.expense)),
+      ...monthlyTrendData.map((d) => Math.max(Number(d.income) || 0, Number(d.expense) || 0)),
       2000000
     );
     return highest * 1.15;
   }, [monthlyTrendData]);
 
-  // Spending categories breakdown for selected month (or past 6 months if current month has few)
+  // Spending categories breakdown for selected month
   const expenseCategoriesBreakdown = useMemo(() => {
-    const targetTransactions = currentMonthTransactions.filter((t) => t.type === 'expense');
+    const targetTransactions = currentMonthTransactions.filter((t) => t && t.type === 'expense');
     const categoryTotals: Record<string, number> = {};
 
     targetTransactions.forEach((t) => {
-      categoryTotals[t.category] = (categoryTotals[t.category] || 0) + t.amount;
+      const cat = t.category || 'Lain-lain';
+      categoryTotals[cat] = (categoryTotals[cat] || 0) + (Number(t.amount) || 0);
     });
 
     const items = Object.entries(categoryTotals).map(([cat, total]) => ({
@@ -124,22 +135,23 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
 
   // Filtered transactions for the ledger table
   const filteredLedger = useMemo(() => {
-    return transactions.filter((t) => {
-      const matchesMonth = selectedMonth === 'all' || t.date.startsWith(selectedMonth);
+    return safeTransactions.filter((t) => {
+      if (!t) return false;
+      const tDate = t.date || '';
+      const matchesMonth = selectedMonth === 'all' || tDate.startsWith(selectedMonth);
       const matchesType = activeTypeFilter === 'all' || t.type === activeTypeFilter;
       const q = searchQuery.toLowerCase();
       const matchesSearch =
         !q ||
-        t.description.toLowerCase().includes(q) ||
-        t.category.toLowerCase().includes(q) ||
-        t.recorder.toLowerCase().includes(q);
+        (t.description && t.description.toLowerCase().includes(q)) ||
+        (t.category && t.category.toLowerCase().includes(q)) ||
+        (t.recorder && t.recorder.toLowerCase().includes(q));
       return matchesMonth && matchesType && matchesSearch;
-    }).sort((a, b) => (a.date < b.date ? 1 : -1));
-  }, [transactions, selectedMonth, activeTypeFilter, searchQuery]);
+    }).sort((a, b) => ((a.date || '') < (b.date || '') ? 1 : -1));
+  }, [safeTransactions, selectedMonth, activeTypeFilter, searchQuery]);
 
   return (
     <div className="space-y-8">
-      
       {/* Top Header & Month Filter Controls */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-slate-200">
         <div>
@@ -179,28 +191,11 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
             <Printer className="w-4 h-4 text-slate-600" />
             <span>Cetak Laporan</span>
           </button>
-
-          {/* Add Transaction Button (Admin Only) */}
-          {isAdmin && (
-            <button
-              type="button"
-              onClick={() => {
-                setNewTxType('expense');
-                setFormCategory('Kebersihan & Angkut Sampah');
-                setIsAddModalOpen(true);
-              }}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs sm:text-sm font-semibold text-white bg-emerald-800 hover:bg-emerald-900 rounded-lg shadow-2xs transition-colors"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Catat Kas</span>
-            </button>
-          )}
         </div>
       </div>
 
       {/* 4 Primary Financial Metric Indicators */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        
         {/* Total Saldo Real-Time */}
         <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-2xs">
           <div className="flex items-center justify-between text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
@@ -262,13 +257,10 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
             {monthSurplus >= 0 ? 'Kondisi kas surplus & sehat.' : 'Pengeluaran melebihi pemasukan bulan ini.'}
           </div>
         </div>
-
       </div>
 
       {/* Chart Visualization Section */}
       <div className="bg-white rounded-xl border border-slate-200 p-5 sm:p-6 shadow-2xs space-y-5">
-        
-        {/* Chart Header & Segmented Switcher */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
           <div>
             <h3 className={`font-bold text-slate-900 ${isSeniorMode ? 'text-xl' : 'text-lg'}`}>
@@ -279,7 +271,6 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
             </p>
           </div>
 
-          {/* Segmented Tab Controls */}
           <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-lg self-start sm:self-auto">
             <button
               type="button"
@@ -308,11 +299,8 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
           </div>
         </div>
 
-        {/* View 1: Monthly Trend Bar & Line Chart (Custom SVG for pristine rendering) */}
         {chartView === 'trend' && (
           <div className="space-y-4">
-            
-            {/* Chart Legend */}
             <div className="flex items-center flex-wrap gap-4 sm:gap-6 text-xs text-slate-600">
               <div className="flex items-center gap-2">
                 <span className="w-3 h-3 rounded-xs bg-emerald-700" />
@@ -328,19 +316,15 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
               </div>
             </div>
 
-            {/* Responsive Interactive SVG Chart Container */}
             <div className="w-full overflow-x-auto pb-2">
               <div className="min-w-[620px] h-64 sm:h-72 relative flex flex-col justify-end pt-6">
-                
-                {/* Horizontal Grid lines */}
                 <div className="absolute inset-x-0 top-6 bottom-8 flex flex-col justify-between pointer-events-none opacity-30">
                   <div className="border-b border-dashed border-slate-300 w-full" />
                   <div className="border-b border-dashed border-slate-300 w-full" />
                   <div className="border-b border-dashed border-slate-300 w-full" />
-                  <div className="border-b border-slate-300 w-full" />
+                  <div className="border-b border-dashed border-slate-300 w-full" />
                 </div>
 
-                {/* Bars & Labels */}
                 <div className="grid grid-cols-6 gap-3 sm:gap-6 h-full items-end z-10 px-4">
                   {monthlyTrendData.map((item) => {
                     const incHeightPct = Math.min(100, Math.round((item.income / maxBarValue) * 100));
@@ -355,17 +339,13 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
                           isCurrent ? 'bg-slate-50 ring-1 ring-emerald-500/40' : 'hover:bg-slate-50/80'
                         }`}
                       >
-                        {/* Hover Tooltip */}
                         <div className="opacity-0 group-hover:opacity-100 pointer-events-none absolute -top-12 bg-slate-900 text-white text-[11px] rounded-md px-2.5 py-1.5 whitespace-nowrap shadow-lg transition-opacity z-30 tabular-nums">
                           <div>Pemasukan: {formatRupiah(item.income)}</div>
                           <div>Pengeluaran: {formatRupiah(item.expense)}</div>
                           <div className="text-emerald-300 font-semibold">Saldo: {formatRupiah(item.balance)}</div>
                         </div>
 
-                        {/* Bar Columns Container */}
                         <div className="w-full flex items-end justify-center gap-1.5 sm:gap-2.5 h-[170px] mb-2">
-                          
-                          {/* Income Bar (Green) */}
                           <div
                             style={{ height: `${incHeightPct}%` }}
                             className="w-1/2 max-w-[28px] bg-emerald-700 hover:bg-emerald-800 rounded-t-xs transition-all relative group/bar"
@@ -373,17 +353,14 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
                             <span className="sr-only">Pemasukan: {formatRupiah(item.income)}</span>
                           </div>
 
-                          {/* Expense Bar (Rose) */}
                           <div
                             style={{ height: `${expHeightPct}%` }}
                             className="w-1/2 max-w-[28px] bg-rose-600 hover:bg-rose-700 rounded-t-xs transition-all relative group/bar"
                           >
                             <span className="sr-only">Pengeluaran: {formatRupiah(item.expense)}</span>
                           </div>
-
                         </div>
 
-                        {/* X-Axis Month Label */}
                         <div className="text-center pt-1 border-t border-slate-200 w-full">
                           <span className={`text-xs font-semibold ${isCurrent ? 'text-emerald-800' : 'text-slate-600'}`}>
                             {item.label}
@@ -393,7 +370,6 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
                     );
                   })}
                 </div>
-
               </div>
             </div>
 
@@ -403,7 +379,6 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
           </div>
         )}
 
-        {/* View 2: Spending Category Breakdown */}
         {chartView === 'categories' && (
           <div className="space-y-4">
             <div className="text-xs font-medium text-slate-500">
@@ -433,7 +408,6 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
                       </span>
                     </div>
 
-                    {/* Visual Progress Bar */}
                     <div className="w-full bg-slate-200 h-2.5 rounded-full overflow-hidden">
                       <div
                         className="bg-rose-600 h-full rounded-full transition-all duration-500"
@@ -453,13 +427,10 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
             )}
           </div>
         )}
-
       </div>
 
       {/* Transaction Ledger Table Section */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
-        
-        {/* Table Controls Header */}
         <div className="p-4 sm:p-5 border-b border-slate-200 space-y-3">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
@@ -471,7 +442,6 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
               </p>
             </div>
 
-            {/* Type Segmented Filter */}
             <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-lg">
               <button
                 type="button"
@@ -509,7 +479,6 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
             </div>
           </div>
 
-          {/* Search bar inside table header */}
           <div className="relative">
             <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
@@ -522,7 +491,6 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
           </div>
         </div>
 
-        {/* Responsive Table Body */}
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm border-collapse">
             <thead>
@@ -532,13 +500,12 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
                 <th className="py-3 px-4 hidden sm:table-cell">Metode</th>
                 <th className="py-3 px-4 hidden md:table-cell">Pencatat</th>
                 <th className="py-3 px-4 text-right">Nominal (Rp)</th>
-                {isAdmin && <th className="py-3 px-4 text-center w-16">Aksi</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filteredLedger.length === 0 ? (
                 <tr>
-                  <td colSpan={isAdmin ? 6 : 5} className="py-12 text-center text-slate-500 text-sm">
+                  <td colSpan={5} className="py-12 text-center text-slate-500 text-sm">
                     Tidak ada catatan transaksi yang sesuai dengan filter.
                   </td>
                 </tr>
@@ -547,13 +514,9 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
                   const isIncome = tx.type === 'income';
                   return (
                     <tr key={tx.id} className="hover:bg-slate-50/60 transition-colors">
-                      
-                      {/* Date */}
                       <td className="py-3.5 px-4 whitespace-nowrap text-xs sm:text-sm font-medium text-slate-600">
                         {tx.date}
                       </td>
-
-                      {/* Category & Description */}
                       <td className="py-3.5 px-4">
                         <div className="font-semibold text-slate-900 text-sm">
                           {tx.category}
@@ -567,43 +530,18 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
                           </div>
                         )}
                       </td>
-
-                      {/* Payment Method */}
                       <td className="py-3.5 px-4 whitespace-nowrap text-xs text-slate-600 hidden sm:table-cell">
                         {tx.paymentMethod || 'Tunai'}
                       </td>
-
-                      {/* Recorder */}
                       <td className="py-3.5 px-4 text-xs text-slate-600 hidden md:table-cell">
                         {tx.recorder}
                       </td>
-
-                      {/* Amount */}
                       <td className="py-3.5 px-4 text-right whitespace-nowrap font-bold tabular-nums">
                         <span className={isIncome ? 'text-emerald-700' : 'text-rose-700'}>
                           {isIncome ? '+ ' : '- '}
                           {formatRupiah(tx.amount)}
                         </span>
                       </td>
-
-                      {/* Admin Actions */}
-                      {isAdmin && (
-                        <td className="py-3.5 px-4 text-center">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (confirm(`Hapus transaksi "${tx.description}"?`)) {
-                                onDeleteTransaction(tx.id);
-                              }
-                            }}
-                            className="p-1.5 text-slate-400 hover:text-rose-600 rounded-md transition-colors"
-                            title="Hapus transaksi"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </td>
-                      )}
-
                     </tr>
                   );
                 })
@@ -611,179 +549,7 @@ export const FinanceModule: React.FC<FinanceModuleProps> = ({
             </tbody>
           </table>
         </div>
-
       </div>
-
-      {/* Modal: Add New Transaction (Admin Only) */}
-      {isAddModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <h3 className="font-bold text-lg text-slate-900">
-                Catat Transaksi Kas RT Baru
-              </h3>
-              <button
-                type="button"
-                onClick={() => setIsAddModalOpen(false)}
-                className="text-slate-400 hover:text-slate-700 text-lg font-bold"
-              >
-                ✕
-              </button>
-            </div>
-
-            <form onSubmit={handleFormSubmit} className="mt-4 space-y-4">
-              
-              {/* Type Switcher */}
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5">
-                  Jenis Transaksi
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setNewTxType('income');
-                      setFormCategory('Iuran Wajib Bulanan');
-                    }}
-                    className={`py-2 px-3 text-sm font-semibold rounded-lg border transition-colors ${
-                      newTxType === 'income'
-                        ? 'bg-emerald-50 border-emerald-600 text-emerald-800'
-                        : 'border-slate-200 text-slate-600 hover:bg-slate-50'
-                    }`}
-                  >
-                    + Pemasukan (Kas Masuk)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setNewTxType('expense');
-                      setFormCategory('Kebersihan & Angkut Sampah');
-                    }}
-                    className={`py-2 px-3 text-sm font-semibold rounded-lg border transition-colors ${
-                      newTxType === 'expense'
-                        ? 'bg-rose-50 border-rose-600 text-rose-800'
-                        : 'border-slate-200 text-slate-600 hover:bg-slate-50'
-                    }`}
-                  >
-                    - Pengeluaran (Biaya)
-                  </button>
-                </div>
-              </div>
-
-              {/* Category */}
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5">
-                  Kategori
-                </label>
-                <select
-                  value={formCategory}
-                  onChange={(e) => setFormCategory(e.target.value)}
-                  className="w-full p-2.5 text-sm bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                >
-                  {newTxType === 'expense'
-                    ? expenseCategoryOptions.map((opt) => <option key={opt} value={opt}>{opt}</option>)
-                    : incomeCategoryOptions.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
-                </select>
-              </div>
-
-              {/* Amount */}
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5">
-                  Nominal Rupiah (Rp)
-                </label>
-                <input
-                  type="number"
-                  required
-                  min="1000"
-                  step="1000"
-                  value={formAmount}
-                  onChange={(e) => setFormAmount(e.target.value)}
-                  placeholder="Contoh: 150000"
-                  className="w-full p-2.5 text-base font-bold text-slate-900 bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                />
-              </div>
-
-              {/* Description */}
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5">
-                  Deskripsi / Keterangan Keperluan
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={formDescription}
-                  onChange={(e) => setFormDescription(e.target.value)}
-                  placeholder="Contoh: Beli semen 2 sak untuk tambal jalan depan Blok B"
-                  className="w-full p-2.5 text-sm bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                {/* Date */}
-                <div>
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5">
-                    Tanggal
-                  </label>
-                  <input
-                    type="date"
-                    required
-                    value={formDate}
-                    onChange={(e) => setFormDate(e.target.value)}
-                    className="w-full p-2.5 text-sm bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                  />
-                </div>
-
-                {/* Method */}
-                <div>
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5">
-                    Metode Pembayaran
-                  </label>
-                  <select
-                    value={formMethod}
-                    onChange={(e) => setFormMethod(e.target.value as any)}
-                    className="w-full p-2.5 text-sm bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                  >
-                    <option value="Tunai">Tunai</option>
-                    <option value="Transfer Bank">Transfer Bank</option>
-                    <option value="QRIS">QRIS</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* Recorder */}
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5">
-                  Nama Petugas Pencatat
-                </label>
-                <input
-                  type="text"
-                  value={formRecorder}
-                  onChange={(e) => setFormRecorder(e.target.value)}
-                  className="w-full p-2.5 text-sm bg-slate-50 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                />
-              </div>
-
-              <div className="pt-3 flex items-center justify-end gap-2 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setIsAddModalOpen(false)}
-                  className="px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
-                >
-                  Batal
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 text-sm font-semibold text-white bg-emerald-800 hover:bg-emerald-900 rounded-lg transition-colors shadow-2xs"
-                >
-                  Simpan Transaksi
-                </button>
-              </div>
-
-            </form>
-          </div>
-        </div>
-      )}
-
     </div>
   );
 };
